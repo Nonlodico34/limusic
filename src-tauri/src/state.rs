@@ -3182,6 +3182,30 @@ impl AppState {
         self.emit_queue().await;
     }
 
+    /// Starts the restored queue when playback on startup is enabled.
+    ///
+    /// Called after [`Self::restore_queue`]. Guests in a Listen Together room leave playback to the
+    /// host, and an already active player must not be started a second time.
+    pub async fn play_on_start(self: &std::sync::Arc<Self>) {
+        if self.db.get_setting("play_on_start").as_deref() != Some("true") {
+            return;
+        }
+        if !self.player.is_idle() {
+            return;
+        }
+        if self.lt.is_guest().await {
+            return;
+        }
+        let current = {
+            let q = self.queue.lock().await;
+            if q.items.is_empty() {
+                return;
+            }
+            q.current
+        };
+        self.play_index(current).await;
+    }
+
     /// Throttled position persistence for resume-on-restart. Records the latest position always
     /// (for a precise flush on pause) and writes it to the DB at most every 5s.
     fn record_position(&self, pos: f64) {

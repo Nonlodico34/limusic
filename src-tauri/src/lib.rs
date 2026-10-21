@@ -808,11 +808,12 @@ pub fn run() {
                 });
             }
 
-            // Restore the last session's queue (paused, not autoplaying). context/11 §state.
+            // Restore the last session's queue, then optionally start playback.
             {
                 let st = app_state.clone();
                 tauri::async_runtime::spawn(async move {
                     st.restore_queue().await;
+                    st.play_on_start().await;
                 });
             }
 
