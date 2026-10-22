@@ -1780,17 +1780,27 @@ impl AppState {
             return;
         }
         let gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        {
+        let video_id = {
             let mut q = self.queue.lock().await;
             if index >= q.items.len() {
                 return;
             }
             q.seek_to(index);
             q.lookahead_loaded = None;
-        }
-        // The next mpv tick is seconds away (a resolve has to finish first); until then
-        // `current_position` would still report the outgoing track's position.
-        self.latest_position.store(0f64.to_bits(), Ordering::SeqCst);
+            q.items[index].video_id.clone()
+        };
+        // The next mpv tick is seconds away because the track must be resolved first. Until then
+        // `latest_position` is still the value that pause/exit persistence will write, so seed it
+        // from `pending_seek` when that saved position belongs to this exact video. A different
+        // track must start at zero instead of inheriting the restored track's position.
+        let resume = self
+            .pending_seek
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|(pending_id, _)| pending_id == &video_id)
+            .map_or(0.0, |(_, position)| *position);
+        self.latest_position.store(resume.to_bits(), Ordering::SeqCst);
         if self.start_current(gen).await {
             self.prime_lookahead(gen).await;
         }
@@ -2195,11 +2205,9 @@ impl AppState {
         if self.generation.load(Ordering::SeqCst) != gen {
             return false; // user moved on
         }
-        // Resume a restored position, but only for the exact track it was saved against (any first
-        // play consumes it, so jumping elsewhere doesn't inherit it). This is handed to `loadfile`
-        // as `start=`, not issued as a seek afterwards: mpv does *not* queue a seek that arrives
-        // before the file is loaded. It fails with MPV_ERROR_COMMAND and playback starts at 0, so
-        // a restored position and a failed-track retry both lost their offset (issue #188).
+        // Resume only the exact video the position was saved for, then consume it on the first
+        // attempt. Pass it to `loadfile` as `start=`: mpv does not queue a seek issued before the
+        // file is loaded, so the old approach started at zero and lost the offset (issue #188).
         let seek = self
             .pending_seek
             .lock()
@@ -2683,8 +2691,7 @@ impl AppState {
         if position > 1.0 {
             *self.pending_seek.lock().unwrap() = Some((video_id, position));
         }
-        // Same reason as `play_index`: until mpv ticks, `current_position` would still be
-        // reporting the track we just left.
+        // Until mpv ticks, `current_position` would still report the track we just left.
         self.latest_position.store(0f64.to_bits(), Ordering::SeqCst);
         if self.start_current(gen).await {
             self.prime_lookahead(gen).await;
