@@ -15,6 +15,10 @@
 
 use std::sync::OnceLock;
 
+const YOUTUBE_MUSIC: &str = "https://music.youtube.com/";
+/// Backoff for startup work that waits for YouTube Music to come online.
+pub const NETWORK_RETRY_DELAYS: &[u64] = &[2, 4, 8, 15, 30];
+
 /// Desktop Chrome. YouTube serves the web `player.js` and the BotGuard endpoints against this, so
 /// the cipher fetcher and the PoToken minter both send it.
 pub const WEB_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -104,6 +108,26 @@ pub fn client() -> &'static reqwest::Client {
         }
         b.build().unwrap_or_default()
     })
+}
+
+/// Checks whether YouTube Music is reachable without requiring a successful HTTP status.
+pub async fn network_reachable() -> bool {
+    client().head(YOUTUBE_MUSIC).timeout(std::time::Duration::from_secs(5)).send().await.is_ok()
+}
+
+/// Waits for YouTube Music to become reachable, retrying with the supplied delays in seconds.
+/// Use [`NETWORK_RETRY_DELAYS`] for the normal startup schedule.
+pub async fn wait_for_network_with_retry(delays: &[u64]) -> bool {
+    if network_reachable().await {
+        return true;
+    }
+    for delay in delays {
+        tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
+        if network_reachable().await {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]

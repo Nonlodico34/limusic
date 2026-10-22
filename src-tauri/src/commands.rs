@@ -818,12 +818,7 @@ pub async fn get_home_more(state: St<'_>, token: String) -> Result<HomePage, Str
 /// on every try. Any status counts, only getting no reply means the network is still down.
 #[tauri::command]
 pub async fn network_reachable() -> bool {
-    crate::http::client()
-        .head("https://music.youtube.com/")
-        .timeout(std::time::Duration::from_secs(5))
-        .send()
-        .await
-        .is_ok()
+    crate::http::network_reachable().await
 }
 
 /// Why a comments command failed, as a stable word the UI words itself. Details go to the debug log.

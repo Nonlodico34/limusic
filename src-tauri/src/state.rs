@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 
 use crate::db::{now_secs, Db, StoredAccount};
 use crate::discord::DiscordHandle;
+use crate::http::{self, NETWORK_RETRY_DELAYS};
 use crate::listentogether::{LtSession, SyncCommand};
 use crate::media::MediaHandle;
 use crate::orchestrator::{Orchestrator, PlaybackData, PlaybackPing, ResolveError};
@@ -3201,6 +3202,15 @@ impl AppState {
             return;
         }
         if self.lt.is_guest().await {
+            return;
+        }
+        // Login launches can run before Wi-Fi or DNS is ready (#483), so wait in the backend
+        // before resolving the restored track. Recheck idle afterwards in case playback started
+        // while the retry schedule was running.
+        if !http::wait_for_network_with_retry(NETWORK_RETRY_DELAYS).await {
+            return;
+        }
+        if !self.player.is_idle() {
             return;
         }
         let current = {
