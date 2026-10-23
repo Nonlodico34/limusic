@@ -785,6 +785,7 @@ pub fn take_launch_args() -> Vec<String> {
 
 #[tauri::command]
 pub async fn show_main(state: St<'_>, window: tauri::WebviewWindow) -> Result<bool, String> {
+    crate::UI_MOUNTED.notify_one();
     if crate::should_start_minimized(&state.db) {
         return Ok(false);
     }

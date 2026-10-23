@@ -398,6 +398,11 @@ const RESTARTED_ENV: &str = "LIMUSIC_RESTARTED";
 /// strings either way: `parseYtLink` in the UI decides what is a link, so there is one parser.
 pub(crate) static LAUNCH_ARGS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
+/// Raised by `show_main` once the SPA has mounted, whether it shows the window or stays in the
+/// tray. `play_on_start` waits for it: started off the setup timeline, the music began while the
+/// window was still coming up.
+pub(crate) static UI_MOUNTED: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
 /// Stay in the tray instead of showing the window: launched at login with "Start minimized to
 /// tray" on, and a tray icon to come back from. Asked by the startup safety net and by
 /// `show_main` once the SPA has mounted.

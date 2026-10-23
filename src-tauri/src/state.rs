@@ -18,7 +18,6 @@ use tokio::sync::Mutex;
 
 use crate::db::{now_secs, Db, StoredAccount};
 use crate::discord::DiscordHandle;
-use crate::http::{self, NETWORK_RETRY_DELAYS};
 use crate::listentogether::{LtSession, SyncCommand};
 use crate::media::MediaHandle;
 use crate::orchestrator::{Orchestrator, PlaybackData, PlaybackPing, ResolveError};
@@ -2206,9 +2205,11 @@ impl AppState {
         if self.generation.load(Ordering::SeqCst) != gen {
             return false; // user moved on
         }
-        // Resume only the exact video the position was saved for, then consume it on the first
-        // attempt. Pass it to `loadfile` as `start=`: mpv does not queue a seek issued before the
-        // file is loaded, so the old approach started at zero and lost the offset (issue #188).
+        // Resume a restored position, but only for the exact track it was saved against (any first
+        // play consumes it, so jumping elsewhere doesn't inherit it). This is handed to `loadfile`
+        // as `start=`, not issued as a seek afterwards: mpv does *not* queue a seek that arrives
+        // before the file is loaded. It fails with MPV_ERROR_COMMAND and playback starts at 0, so
+        // a restored position and a failed-track retry both lost their offset (issue #188).
         let seek = self
             .pending_seek
             .lock()
@@ -3195,31 +3196,22 @@ impl AppState {
     /// Called after [`Self::restore_queue`]. Guests in a Listen Together room leave playback to the
     /// host, and an already active player must not be started a second time.
     pub async fn play_on_start(self: &std::sync::Arc<Self>) {
-        if self.db.get_setting("play_on_start").as_deref() != Some("true") {
+        let enabled = || self.db.get_setting("play_on_start").as_deref() == Some("true");
+        if !enabled() {
             return;
         }
-        if !self.player.is_idle() {
+        let Some(item) = self.current_item().await else { return };
+        crate::UI_MOUNTED.notified().await;
+        // Login launches can run before Wi-Fi or DNS is ready (#483); a local file needs no
+        // network. The other checks come after the wait: in that minute the user can start
+        // something, join a room as a guest or turn this off.
+        if !crate::local::is_local_song(&item.video_id) && !crate::http::wait_for_network().await {
             return;
         }
-        if self.lt.is_guest().await {
+        if !enabled() || !self.player.is_idle() || self.lt.is_guest().await {
             return;
         }
-        // Login launches can run before Wi-Fi or DNS is ready (#483), so wait in the backend
-        // before resolving the restored track. Recheck idle afterwards in case playback started
-        // while the retry schedule was running.
-        if !http::wait_for_network_with_retry(NETWORK_RETRY_DELAYS).await {
-            return;
-        }
-        if !self.player.is_idle() {
-            return;
-        }
-        let current = {
-            let q = self.queue.lock().await;
-            if q.items.is_empty() {
-                return;
-            }
-            q.current
-        };
+        let current = self.queue.lock().await.current;
         self.play_index(current).await;
     }
 
